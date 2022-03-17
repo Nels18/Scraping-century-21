@@ -1,5 +1,6 @@
 // Importer Puppeteer
 const puppeteer = require("puppeteer");
+const fs = require('fs');
 
 // Liste des urls des départements de recherche
 const urlsLocation = [
@@ -12,6 +13,29 @@ const urlsLocation = [
   // "d-95_val_d_oise/",
 ];
 
+const getBrowser = async () =>{
+	let browser;
+  
+	try {
+    console.log("Opening the browser......");
+    browser = await puppeteer.launch();
+    // browser = await puppeteer.launch({headless: false});
+  } catch (err) {
+      console.log("Could not create a browser instance => : ", err);
+  }
+
+  return browser;
+}
+
+const closeBrowser = async (browser) =>{  
+	try {
+    console.log("Closing the browser......");
+    await browser.close();
+  } catch (err) {
+      console.log("Could not close browser instance => : ", err);
+  }
+}
+
 /**
  *
  * @param {puppeteer.Page} page
@@ -20,6 +44,7 @@ const urlsLocation = [
 const goToPage = async (page, url) => {
   try {
     // Aller à la page souhaitée
+    console.log(`Navigating to : ${url}`);
     await page.goto(url, { waitUntil: "networkidle2" });
 
     // Refuser éventuellement les cookies
@@ -30,6 +55,7 @@ const goToPage = async (page, url) => {
     }
   } catch (error) {
     console.error("/!\\ Error from goToPage() :", error);
+    return
   }
 };
 
@@ -50,7 +76,7 @@ const getUrlsPages = async (page, url) => {
       const urlsPagination = document.querySelectorAll(
         ".c-the-pagination-bar ul.tw-flex.tw-justify-center"
       )[0].children;
-
+      
       // Récupérer le totale de pages
       nbPages = urlsPagination[urlsPagination.length - 1].innerText;
 
@@ -79,7 +105,7 @@ const getUrlsPages = async (page, url) => {
 const getPagesForEachLocation = async (page, urlFull) => {
   try {
     // Récupérer les urls de toutes les pages de la recherche dans la pagination
-    const result = getUrlsPages(page, urlFull);
+    const result = await getUrlsPages(page, urlFull);
 
     return result;
   } catch (error) {
@@ -101,6 +127,7 @@ const getPagesToScrap = async (browser) => {
 
       const page = await browser.newPage();
 
+      // urlFull = `https://www.century21.fr/trouver_logement/detail/2445016438/`;
       urlFull = `https://www.century21.fr/annonces/f/achat/${url}`;
 
       allUrls[index] = await getPagesForEachLocation(page, urlFull);
@@ -182,12 +209,12 @@ const getProperties = async () => {
             `https://www.century21.fr${propertyDetailUrl}`;
 
           result.push({
-            cityName: propertyCityName,
-            surface: Number(propertySurface),
-            nbRoom: Number(propertyNbRoom),
-            price: Number(propertyPrice),
-            type: propertyType.slice(0, propertyType.indexOf(" ")), // Récupération du type uniqument
-            detailUrl: propertyDetailUrl,
+            "cityName": propertyCityName,
+            "surface": Number(propertySurface),
+            "nbRoom": Number(propertyNbRoom),
+            "price": Number(propertyPrice),
+            "type": propertyType.slice(0, propertyType.indexOf(" ")), // Récupération du type uniqument
+            "detailUrl": propertyDetailUrl,
           });
         });
     });
@@ -243,7 +270,7 @@ const getMorePropertyInformations = async () => {
  */
 const getAllProperties = async () => {
   try {
-    const browser = await puppeteer.launch();
+    const browser = await getBrowser();
     // const browser = await puppeteer.launch({ headless: false });
 
     //Récupérer toutes les pages à scraper
@@ -259,7 +286,6 @@ const getAllProperties = async () => {
       // Récupérer les biens d'une page
       const property = await page.evaluate(getProperties);
       result = [...result, property];
-      console.log('urlPageToScrap :', urlPageToScrap);
     }
     
     result = result.flat();
@@ -273,10 +299,13 @@ const getAllProperties = async () => {
 
       //Récupérer les informations accessibles uniquement sur la page du détail du bien
       const PropertyDetail = await page.evaluate(getMorePropertyInformations);
-      property.description = PropertyDetail.description;
-      property.images = PropertyDetail.images;
-      console.log('urlPropertyDetail :', urlPropertyDetail);
+      
+      property["description"] = PropertyDetail.description;
+      property["images"] = PropertyDetail.images;
     }
+
+    // Fermer le navigateur
+    await closeBrowser(browser);
 
     return result;
   } catch (error) {
@@ -284,11 +313,37 @@ const getAllProperties = async () => {
   }
 };
 
+const saveData = async (scrapedData) => {
+  const currentDatetime = new Date();
+  let year = currentDatetime.getFullYear().toString();
+  let month = (currentDatetime.getMonth() + 1).toString();
+  let date = currentDatetime.getDate().toString();
+  let hours = currentDatetime.getHours().toString();
+  let minutes = currentDatetime.getMinutes().toString();
+  let seconds = currentDatetime.getSeconds().toString();
+
+  let filenameParameter = {year, month, date, hours, minutes, seconds};
+  
+  for (const parameter in filenameParameter) {
+    if (Object.hasOwnProperty.call(filenameParameter, parameter) && 10 > filenameParameter[parameter]) {
+      filenameParameter[parameter] =  '0' + filenameParameter[parameter];
+    }
+  }
+
+  const fileOutput = `data_century21_scraped_${filenameParameter.year}${filenameParameter.month}${filenameParameter.date}${filenameParameter.hours}${filenameParameter.minutes}${filenameParameter.seconds}.json`;
+
+  fs.writeFile(`./data_century21/${fileOutput}`, JSON.stringify(scrapedData), 'utf8', function(error) {
+    if(error) {
+      return console.log(error);
+    }
+    console.log(`Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${fileOutput}'`);
+});
+}
+
 (async () => {
+  console.time('Scraping ')
   const data = await getAllProperties();
-
   console.log("data :", data.length);
+  saveData(data);
+  console.timeEnd('Scraping ')
 })();
-
-  // Fermer le navigateur
-  // await browser.close();
