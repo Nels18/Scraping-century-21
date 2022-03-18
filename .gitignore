@@ -1,3 +1,4 @@
 # dependencies
 /node_modules
 /data_century21
+.env
