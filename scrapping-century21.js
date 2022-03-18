@@ -390,10 +390,6 @@ const getAllProperties = async () => {
       connection.connect((error) => {
         
         try {
-          const getCityIdQuery = `SELECT id FROM InvestImmo.city c WHERE LOWER(c.name) = LOWER(${connection.escape(formatCityName(dbCityName))}) AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
-
-          const getPropertyTypeIdQuery = `SELECT id FROM InvestImmo.property_type pt WHERE LOWER(pt.type) = LOWER(${connection.escape(property.type)});`;
-
           /**
            * Faire des requête à la bdd
            * @param {*} sql Requête sql
@@ -414,6 +410,8 @@ const getAllProperties = async () => {
            */
           const getCityId = async () => {
             try {
+              const getCityIdQuery = `SELECT id FROM InvestImmo.city c WHERE LOWER(c.name) = LOWER(${connection.escape(formatCityName(dbCityName))}) AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
+
               const result = await query(getCityIdQuery)
               return result[0].id;
             } catch (error) {
@@ -427,65 +425,32 @@ const getAllProperties = async () => {
            */
           const getPropertyTypeId = async () => {
             try {
+              const getPropertyTypeIdQuery = `SELECT id FROM InvestImmo.property_type pt WHERE LOWER(pt.type) = LOWER(${connection.escape(property.type)});`;
+
               const result = await query(getPropertyTypeIdQuery)
               return result[0].id;
             } catch (error) {
               console.error('Erreur de requête : ', error);
             }
           }
-
-          
-
           
           const insertProperty = async () => {
             let cityId;
             let propertyTypeId;
-
+            
             await getCityId().then(res => cityId = res);
             await getPropertyTypeId().then(res => propertyTypeId = res);
+            
+            const addProperty = `INSERT INTO InvestImmo.property (city_id, property_type_id, surface, room_number, price, description) VALUES(${connection.escape(cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(property.description)})`;
+            
 
             console.log('cityId :', cityId);
             console.log('propertyTypeId :', propertyTypeId);
+            console.log('addProperty :', addProperty);
 
           }
 
           insertProperty();
-
-          // connection.query(getCityIdQuery, (error, result) => {
-          //   if (error) {
-          //     return;
-          //   }
-          //   cityId = result[0].id;
-          //   console.log('*** :',cityId);
-
-          // });
-
-          // con.query(querySQL, function (err, result, fields) {
-          //   for(var i in result)
-          //    {
-          //         variable[i] = result[i]
-          //    }
-          // });
-          
-          // getCityId(result => {
-          //   cityId = result[0].id;
-
-          //   return cityId;
-          
-          //   // const addProperty = `INSERT INTO InvestImmo.property (city_id, surface, room_number, price, description) 
-          //   // VALUES(${connection.escape(cityId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(property.description)})`;
-
-          //   // console.log('addProperty :', addProperty);
-
-          //   // connection.query(addProperty, function (error, result) {
-          //   //   if (error) {
-          //   //     console.log('Erreur de requête : ', error);
-          //   //     return;
-          //   //   }
-          //   //   console.log('Requête réussie :',result);
-          //   // });
-          // });
-
           
         } catch (error) {
           console.log("Erreur de requête : ", error);
