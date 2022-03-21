@@ -305,6 +305,8 @@ const getAllProperties = async () => {
 
     result = result.flat();
 
+    let queriesData = '';
+
     // Pour chaque bien
     // Aller dans la page de détail
     // Récupérer les détails du bien
@@ -408,12 +410,18 @@ const getAllProperties = async () => {
            * Récupérer l'id de la ville de l'annonce à ajouter
            * @returns L'id de la ville
            */
-          const getCityId = async () => {
+          const getCityDb = async () => {
             try {
-              const getCityIdQuery = `SELECT id FROM InvestImmo.city c WHERE LOWER(c.name) = LOWER(${connection.escape(formatCityName(dbCityName))}) AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
+              let rentColumnAverage = 'average_rent_apartment';
 
-              const result = await query(getCityIdQuery)
-              return result[0].id;
+              if ('maison' == property.type.toLowerCase()) {
+                rentColumnAverage = 'average_rent_house';
+              }
+
+              const getCityDbQuery = `SELECT id, ${rentColumnAverage} FROM InvestImmo.city c WHERE LOWER(c.name) = LOWER(${connection.escape(formatCityName(dbCityName))}) AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
+
+              const result = await query(getCityDbQuery)
+              return result[0];
             } catch (error) {
               console.error('Erreur de requête : ', error);
             }
@@ -433,34 +441,116 @@ const getAllProperties = async () => {
               console.error('Erreur de requête : ', error);
             }
           }
+
+          const calculateRentability = async (property) => {
+            try {
+              let rentAverage;
+              let nameRentAevrageColumn;
+              let result = 0;
+              let price;
+              let rent;
+  
+              if ('maison' == await (property.type).toLowerCase()) {
+                nameRentAevrageColumn = 'average_rent_house';
+              } else {
+                nameRentAevrageColumn = 'average_rent_apartment';
+              }
+
+              await getCityDb().then(res => rentAverage = res[nameRentAevrageColumn]);
+
+              console.log('start');
+              price = property.price + ( 9 * property.price / 100);
+              console.log('property.price :', property.price);
+              console.log('price :', price);
+              rent = property.surface * rentAverage;
+              console.log('property.surface :', property.surface);
+              console.log('rentAverage :', rentAverage);
+              console.log('rent :', rent);
+              result = (rent * 12 * 100) / price;
+              console.log('result :', result);
+              console.log('end');
+              
+              return result.toFixed(1);
+            } catch (error) {
+              console.error('Erreur de calcul de rentabilité : ', error);
+            }
+          }
+
+
+          const mysql_real_escape_string = (str) => {
+            return str.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, function (char) {
+              switch (char) {
+                case "\0":
+                  return "\\0";
+                case "\x08":
+                  return "\\b";
+                case "\x09":
+                  return "\\t";
+                case "\x1a":
+                  return "\\z";
+                case "\n":
+                  return "\\n";
+                case "\r":
+                  return "\\r";
+                case "\"":
+                case "'":
+                case "\\":
+                case "%":
+                  return "\\"+char;
+                default:
+                  return char;
+              }
+            });
+          }
           
           const insertProperty = async () => {
             let cityId;
             let propertyTypeId;
+            let rentability = '';
             
-            await getCityId().then(res => cityId = res);
-            await getPropertyTypeId().then(res => propertyTypeId = res);
-            
-            const addProperty = `INSERT INTO InvestImmo.property (city_id, property_type_id, surface, room_number, price, description) VALUES(${connection.escape(cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(property.description)})`;
-            
+            await getCityDb().then(result => cityId = result.id);
 
-            console.log('cityId :', cityId);
-            console.log('propertyTypeId :', propertyTypeId);
-            console.log('addProperty :', addProperty);
+            await getPropertyTypeId().then(result => propertyTypeId = result);
+            // calculateRentability(property).then(result => console.log('result :', result));
+
+            await calculateRentability(property).then(result => rentability = result);
+            // console.log('rentability :', rentability);
+            
+            const addProperty = `INSERT INTO InvestImmo.property (source, city_id, property_type_id, surface, room_number, price, rentability, description, source_url) \nVALUES('Scraping', ${connection.escape(cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(rentability)}, ${connection.escape(mysql_real_escape_string(property.description))}, ${connection.escape(mysql_real_escape_string(property.detailUrl))});\n`;
+        
+            let addPropertyImages = 'INSERT INTO InvestImmo.property_image (property_id, image, created_at, updated_at)\nVALUES ';
+
+            for (let index = 0; index < property.images.length; index++) {
+              const image = property.images[index];
+              
+              addPropertyImages += `(LAST_INSERT_ID(), ${connection.escape(mysql_real_escape_string(image))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+
+              // console.log('index :', index);
+              // console.log('property.images.length :', property.images.length);
+              // console.log('(property.images.length - 1) == index :', (property.images.length - 1) == index);
+
+              if ((property.images.length - 1) !== index) {
+                addPropertyImages += ',\n'
+              } else {
+                addPropertyImages += ';\n'
+              }
+            }
+
+            // console.log('cityId :', cityId);
+            // console.log('propertyTypeId :', propertyTypeId);
+            // console.log('*** INSERT *** :', addProperty, addPropertyImages);
+
+            queriesData = queriesData + addProperty + addPropertyImages;
 
           }
 
           insertProperty();
+          getCityDb();
           
         } catch (error) {
           console.log("Erreur de requête : ", error);
         }
-        
-        let addPropertyImages = '';
 
-        property.images.forEach(image => {
-          addPropertyImages += `INSERT INTO InvestImmo.property_image (property_id, image, created_at, updated_at) VALUES (LAST_INSERT_ID(), ${connection.escape(image)}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);\n`;
-        });
         // console.log('addPropertyImages :', addPropertyImages);
 
         // connection.query(addPropertyImages, function (error, result) {
@@ -481,7 +571,8 @@ const getAllProperties = async () => {
     // Fermer le navigateur
     await closeBrowser(browser);
 
-    return result;
+    // return result;
+    return queriesData;
   } catch (error) {
     console.error("/!\\ Error from getAllProperties() :", error);
   }
@@ -507,101 +598,40 @@ const saveData = async (scrapedData) => {
     }
   }
 
-  const fileOutput = `data_century21_scraped_${filenameParameter.year}${filenameParameter.month}${filenameParameter.date}${filenameParameter.hours}${filenameParameter.minutes}${filenameParameter.seconds}.json`;
+  // const jsonFileOutput = `data_century21_scraped_${filenameParameter.year}${filenameParameter.month}${filenameParameter.date}${filenameParameter.hours}${filenameParameter.minutes}${filenameParameter.seconds}.json`;
 
-  fs.writeFile(
-    `./data_century21/${fileOutput}`,
-    JSON.stringify(scrapedData),
-    "utf8",
-    function (error) {
-      if (error) {
-        return console.log(error);
-      }
-      console.log(
-        `Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${fileOutput}'`
-      );
+  const sqlFileOutput = `data_century21_scraped_${filenameParameter.year}${filenameParameter.month}${filenameParameter.date}${filenameParameter.hours}${filenameParameter.minutes}${filenameParameter.seconds}.sql`;
+
+  // fs.writeFile(
+  //   // `./data_century21/${jsonFileOutput}`,
+  //   // JSON.stringify(scrapedData),
+  //   `./data_century21/${sqlFileOutput}`,
+  //   JSON.stringify(scrapedData),
+  //   "utf8",
+  //   function (error) {
+  //     if (error) {
+  //       return console.log(error);
+  //     }
+  //     console.log(
+  //       // `Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${jsonFileOutput}'`
+  //       `Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${sqlFileOutput}'`
+  //     );
+  //   }
+  // );
+  fs.writeFile(`./data_century21/${sqlFileOutput}`, scrapedData, 'utf8', (error) => {
+    if(error) {
+      return console.log(error);
     }
-  );
+      console.log(`Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${sqlFileOutput}'`);
+      process.exit();
+  });
 };
 
-(async () => {
-  console.time("Scraping ");
-  const data = await getAllProperties();
-  // const data = [
-  //   {
-  //     cityName: 'CHOISY LE ROI',
-  //     surface: 12.99,
-  //     nbRoom: 1,
-  //     price: 103000,
-  //     type: 'Appartement',
-  //     detailUrl: 'https://www.century21.fr/trouver_logement/detail/2689813335/',
-  //     description: `SAINT LOUIS.Dans une résidence de standing très bien entretenue, avec gardien, à proximité des commerces et des transports : bus 183, Tramway T9 et RER C "Choisy le Roi" à 10 min à pied. Venez découvrir ce studio comprenant : une entrée avec placard, un séjour avec un coin cuisine, une salle d'eau avec WC et un balcon.Idéal investisseur!`,
-  //     images: [
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_25899_8_A1037563-B18F-4F16-B1C5-925A82E93482.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_25899_8_0705A9E3-0ACE-4031-AE8D-0BAF14FEC6FB.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_25899_8_DBF955EE-F690-4B52-8CE8-7052EA6F1BE7.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_25899_8_66B1477C-6D44-4272-95D0-49658AEBA68A.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_25899_8_761E132E-3720-4665-985C-15B8352C9FBB.jpg'
-  //     ]
-  //   },
-  //   {
-  //     cityName: 'CHOISY LE ROI',
-  //     surface: 131,
-  //     nbRoom: 5,
-  //     price: 499000,
-  //     type: 'Maison',
-  //     detailUrl: 'https://www.century21.fr/trouver_logement/detail/2821029008/',
-  //     description: "Quartier Parc de la Mairie.Au sein d'un quartier pavillonnaire à 200 mètres du nouveau Tram T9, nous vous proposons cette belle maison de 5 pièces principales.L'accueil se fait par une véranda donnant sur le jardin exposé plein Sud. Le séjour est pourvu d'une cheminée, la cuisine attenante est entièrement aménagée.Sur le même niveau se trouve également une salle de bains avec WC.A l'étage un grand palier avec rangement distribue deux chambres donnant sur le jardin au calme et une salle d'eau avec WC.Au deuxième niveau vous attend un grand bureau et une chambre de 14 m².L'espace extérieur exposé au Sud permet de profiter des beaux jours et de stationner au moins deux véhicules.Pour les commodités, écoles et commerces sont à proximité immédiate et la gare RER C est à 1.200 mètres ainsi que le TVM.",
-  //     images: [
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_2E57B841-491F-4A9F-9DE6-89DEB130A5FE.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_D2264F13-A2FD-4135-B72C-FAF505912CCF.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_429D9843-3991-4C59-8095-F2E2EBDDD5A0.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_2E8C852B-FE53-49AC-BFF7-910CAF0F391A.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_7E143BFE-B013-4EC0-AF4B-C995FC4FC903.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_B6CCC10A-2915-4D1D-BAF1-489DC2E7861A.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_EDFC411B-EA80-4763-AC25-9DC13752C520.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_9D755213-B090-4E69-94D3-BCE2BF7C46C4.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_5BD85A25-2F56-4BF4-9738-7C8499FBBE3A.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_FD744033-760A-4921-B434-1482414A78A7.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_9ED6642B-9CEA-4A1B-8B8E-1C744E557EAD.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_A56D60D0-3D9C-4644-8679-62DCB3C5D7F4.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_5E19A4A1-2F81-4A8D-99DD-B42FA80227B6.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_128BD1A6-B176-4F0C-8F67-6CDEF2B40177.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_6B80B564-C112-4D62-8EE7-09396596D470.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_774ED581-DD5D-4879-8934-DF1C9B8BC632.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_6F2803C9-E0F2-43DC-BC9B-F083A26D5F9F.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_584E25B9-626B-4BE4-8637-C6FD4CAB5D1E.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_ECC88783-B3BF-4D6E-A2D0-D5B24F5D765E.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_80213695-19BB-45B1-9706-B29ED389E26C.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_5CFF2153-57E6-41B4-A76D-872C1625B603.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_ACD70704-B47D-4115-BF54-87C5AD103BFC.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26044_8_485501EE-310C-47D8-A8C8-82EAD600ABC6.jpg'
-  //     ]
-  //   },
-  //   {
-  //     cityName: 'CHOISY LE ROI',
-  //     surface: 36.83,
-  //     nbRoom: 2,
-  //     price: 197500,
-  //     type: 'Appartement',
-  //     detailUrl: 'https://www.century21.fr/trouver_logement/detail/2810783935/',
-  //     description: "Choisy le roi dans le quartier des gondoles nord, venez visiter cet appartement de type F2 au 3ème et dernier étage sans ascenseur. Il se compose d'une entrée avec rangements, une pièce de vie avec cuisine ouverte menant sur un balcon de 5m² exposé sud, et une chambre. Une place de stationnement privative. Résidence récente de 2002 avec de faibles charges et très bien entretenue.",
-  //     images: [
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_539F7C18-E0BA-4525-9F8D-5FE8244C0E7A.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_0009EA48-8841-481F-8F67-3204FB28697B.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_683B6F00-DE72-4553-898C-7E3E9886B759.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_6A312E77-75A2-4C04-91DC-C1BFBC2F3743.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_B38F6E87-C23F-4CD1-BDA5-4E53BA59DD41.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_0BB3EEE1-B513-4C97-A405-C1FFB98E9E21.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_653C7B06-D7F7-4FB2-BC2D-289AF0BAD465.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_5E8E6CA7-2D91-4B55-BC9C-D7DDFB8C9D9D.jpg',
-  //       'https://www.century21.fr/imagesBien/s3/202/3094/c21_202_3094_26017_8_3ADDDC9A-F0A0-4762-A1A4-0E6842568615.jpg'
-  //     ]
-  //   }
-  // ];
-
-  console.log("data :", data.length);
-  saveData(data);
-  console.timeEnd("Scraping ");
-  process.exit();
-})();
+(
+  async () => {
+    console.time("Scraping ");
+    const data = await getAllProperties();
+    await saveData(data);
+    console.timeEnd("Scraping ");
+  }
+)();
