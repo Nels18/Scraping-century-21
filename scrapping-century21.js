@@ -2,7 +2,7 @@
 require("dotenv").config();
 const puppeteer = require("puppeteer");
 const fs = require("fs");
-const mysql = require("mysql2"); //mysql connector
+const mysql = require("mysql2");
 
 //connect to MySQL
 const connection = mysql.createConnection({
@@ -64,6 +64,7 @@ const goToPage = async (page, url) => {
       await page.click(denyCookiesBtn);
     }
   } catch (error) {
+    saveErrorLog(error);
     console.error("/!\\ Error from goToPage() :", error);
     return;
   }
@@ -102,6 +103,7 @@ const getUrlsPages = async (page, url) => {
       return result;
     }, url);
   } catch (error) {
+    saveErrorLog(error);
     console.error("/!\\ Error from getUrlsPages() :", error);
   }
 };
@@ -119,6 +121,7 @@ const getPagesForEachLocation = async (page, urlFull) => {
 
     return result;
   } catch (error) {
+    saveErrorLog(error);
     console.error("/!\\ Error from getPagesForEachLocation() :", error);
   }
 };
@@ -149,6 +152,7 @@ const getPagesToScrap = async (browser) => {
 
     return result;
   } catch (error) {
+    saveErrorLog(error);
     console.error("/!\\ Error from getPagesToScrap() :", error);
   }
 };
@@ -233,7 +237,8 @@ const getProperties = async () => {
 
     return result;
   } catch (error) {
-    console.error("/!\\ Error from getProperties() :", error);
+    saveErrorLog(error);
+    console.error("/!\\ /!\\ Error from getProperties() :", error);
   }
 };
 
@@ -272,9 +277,223 @@ const getMorePropertyInformations = async () => {
 
     return propertyDetailInformations;
   } catch (error) {
-    console.error("/!\\ Error from getMorePropertyInformations() :", error);
+    saveErrorLog(error);
+    console.error("/!\\ /!\\ Error from getMorePropertyInformations() :", error);
   }
 };
+
+const escapeMysqlRealString = (string) => {
+  return string.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, (character) => {
+    switch (character) {
+      case "\0":
+        return "\\0";
+      case "\x08":
+        return "\\b";
+      case "\x09":
+        return "\\t";
+      case "\x1a":
+        return "\\z";
+      case "\n":
+        return "\\n";
+      case "\r":
+        return "\\r";
+      case "'":
+        return "''"
+      case "\"":
+      case "\\":
+      case "%":
+        return "\\"+character;
+      default:
+        return character;
+    }
+  });
+}
+
+/**
+ * Faire des requête à la bdd
+ * @param {*} sql Requête sql
+ * @returns Une promesse contenant le résultat de la requete
+ */
+const query = (sql) => {
+  return new Promise((resolve, reject) => {
+    connection.query(sql, (error, results) => {
+      if (error) return reject(error);
+      resolve(results);
+    });
+  })
+}
+
+const formatCityName = (string) => {
+  const accentedChar = {
+    à: "a",
+    á: "a",
+    â: "a",
+    ã: "a",
+    ä: "a",
+    å: "a",
+    ò: "o",
+    ó: "o",
+    ô: "o",
+    õ: "o",
+    ö: "o",
+    ø: "o",
+    è: "e",
+    é: "e",
+    ê: "e",
+    ë: "e",
+    ç: "c",
+    ì: "i",
+    í: "i",
+    î: "i",
+    ï: "i",
+    ù: "u",
+    ú: "u",
+    û: "u",
+    ü: "u",
+    ÿ: "y",
+    ñ: "n",
+    "-": " ",
+    _: " ",
+  };
+  let result = "";
+  for (let index = 0; index < string.length; index++) {
+    const char = string[index];
+    
+    const newChar = accentedChar[char.toLowerCase()];
+    if (accentedChar[char.toLowerCase()]) {
+      result = result + newChar;
+    } else {
+      result = result + char.toLowerCase();
+    }
+  }
+
+  result = result.split(" ").join("-");
+  result = result.replace(/^(st-)/,"saint-");
+  result = result.replace(/(-st-)/,"-saint-");      
+  string = result;
+
+  return string;
+};
+
+const checkIfPropertyIsALreadyScraped = async (property) => {
+  try {
+    console.log('property :', property);
+    const getPropertyUrlDbQuery = `SELECT source_url FROM InvestImmo.property WHERE source_url = '${escapeMysqlRealString(property.detailUrl)}';`;
+
+    console.log('property.detailUrl :', property.detailUrl);
+
+    const propertyUrlDb = await query(getPropertyUrlDbQuery);
+
+    // const isAlreadyScraped = (0 === await query(getPropertyUrlDbQuery).length);
+    console.log('getPropertyUrlDbQuery :', getPropertyUrlDbQuery);
+    console.log('propertyUrlDb :', propertyUrlDb);
+
+    const isAlreadyScraped = 0 === propertyUrlDb.length;
+    console.log('isAlreadyScraped :', isAlreadyScraped);
+
+    return isAlreadyScraped;
+  } catch (error) {
+    saveErrorLog(error);
+    console.error('/!\\ Erreur dans checkIfPropertyIsALreadyScraped : ', error);
+  }
+};
+
+/**
+ * Récupérer l'id de la ville de l'annonce à ajouter
+ * @returns L'id de la ville
+ */
+const getCityDb = async (property) => {
+  try {
+
+    if ('maison' == await (property.type).toLowerCase()) {
+      property.rentAverageColumnName = 'average_rent_house';
+    } else {
+      property.rentAverageColumnName = 'average_rent_apartment';
+    }
+
+    const getCityDbQuery = `SELECT id, ${property.rentAverageColumnName} FROM InvestImmo.city c WHERE LOWER(c.name) = LOWER('${escapeMysqlRealString(formatCityName(property.cityName))}') AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
+
+    // console.log('getCityDbQuery :', getCityDbQuery);
+
+    const result = await query(getCityDbQuery);
+    return result[0];
+  } catch (error) {
+    saveErrorLog(error);
+    console.error('/!\\ Erreur de requête : ', error);
+  }
+}
+  
+/**
+ * Récupérer l'id du type de l'annonce à ajouter
+ * @returns L'id du type
+ */
+const getPropertyTypeId = async (property) => {
+  try {
+    const getPropertyTypeIdQuery = `SELECT id FROM InvestImmo.property_type pt WHERE LOWER(pt.type) = LOWER('${escapeMysqlRealString(property.type)}');`;
+
+    const result = await query(getPropertyTypeIdQuery)
+    return result[0].id;
+  } catch (error) {
+    saveErrorLog(error);
+    console.error('/!\\ Erreur de requête : ', error);
+  }
+}
+  
+const calculateRentability = async (property) => {
+  try {
+    let result = 0;
+    let price;
+    let rent;
+
+    price = property.price + ( 9 * property.price / 100);
+    rent = property.surface * property.rentAverage;
+    result = (rent * 12 * 100) / price;
+    
+    return result.toFixed(1);
+  } catch (error) {
+    saveErrorLog(error);
+    console.error('/!\\ Erreur de calcul de rentabilité : ', error);
+  }
+}
+
+const insertProperty = async (property) => {
+  try {
+    let propertyTypeId;
+    let rentability = '';
+    let queryInsertData = '';
+    
+    await getCityDb(property).then(result => {
+      property.cityId = result.id;
+      property.rentAverageColumnName = result[property.rentAverageColumnName];
+    });
+  
+  
+    await getPropertyTypeId(property).then(result => propertyTypeId = result);
+  
+    await calculateRentability(property).then(result => rentability = result);
+    
+    const queryInsertProperty = `INSERT INTO InvestImmo.property (source, city_id, property_type_id, surface, room_number, price, rentability, description, source_url) \nVALUES('Scraping', ${connection.escape(property.cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(rentability)}, '${escapeMysqlRealString(property.description)}', '${escapeMysqlRealString(property.detailUrl)}');\n`;
+  
+    let queryInsertPropertyImages = 'INSERT INTO InvestImmo.property_image (property_id, image, created_at, updated_at)\nVALUES ';
+  
+    for (let index = 0; index < property.images.length; index++) {
+      const image = property.images[index];
+      
+      queryInsertPropertyImages += `(LAST_INSERT_ID(), '${escapeMysqlRealString(image)}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+  
+      if ((property.images.length - 1) !== index) {
+        queryInsertPropertyImages += ',\n'
+      } else {
+        queryInsertPropertyImages += ';\n'
+      }
+    }
+  
+    return queryInsertData = queryInsertData + queryInsertProperty + queryInsertPropertyImages;
+  } catch (error) {
+    saveErrorLog(error);
+    console.error('/!\\ Erreur lors de la création du fichier sql : ', error);
+  }
+}
 
 /**
  * Récupérer tous les biens des départements recherchés
@@ -298,296 +517,74 @@ const getAllProperties = async () => {
       await goToPage(page, pagesToScrap[index]);
 
       // Récupérer les biens d'une page
-      const property = await page.evaluate(getProperties);
+      const properties = await page.evaluate(getProperties);
 
-      result = [...result, property];
+      result = [...result, properties];
     }
 
     result = result.flat();
 
-    let queriesData = '';
+    let queryInsertData = '';
 
     // Pour chaque bien
     // Aller dans la page de détail
     // Récupérer les détails du bien
     for await (const property of result) {
-      let dbCityName = property.cityName;
 
-      const formatCityName = (string) => {
-        const accentedChar = {
-          à: "a",
-          á: "a",
-          â: "a",
-          ã: "a",
-          ä: "a",
-          å: "a",
-          ò: "o",
-          ó: "o",
-          ô: "o",
-          õ: "o",
-          ö: "o",
-          ø: "o",
-          è: "e",
-          é: "e",
-          ê: "e",
-          ë: "e",
-          ç: "c",
-          ì: "i",
-          í: "i",
-          î: "i",
-          ï: "i",
-          ù: "u",
-          ú: "u",
-          û: "u",
-          ü: "u",
-          ÿ: "y",
-          ñ: "n",
-          "-": " ",
-          _: " ",
-        };
-        let result = "";
-        for (let index = 0; index < string.length; index++) {
-          const char = string[index];
-          
-          const newChar = accentedChar[char.toLowerCase()];
-          if (accentedChar[char.toLowerCase()]) {
-            result = result + newChar;
-          } else {
-            result = result + char.toLowerCase();
-          }
-        }
-      
-        result = result.split(" ").join("-");
-        result = result.replace(/^(st-)/,"saint-");
-        result = result.replace(/(-st-)/,"-saint-");      
-        string = result;
-      
-        return string;
-      };
-
-      // let sqlData = '';
-
-      // fs.writeFile(
-      //   `./data_century21/data.sql`,
-      //   sqlData,
-      //   "utf8",
-      //   function (error) {
-      //     if (error) {
-      //       return console.log(error);
-      //     }
-      //     console.log(
-      //       `Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${fileOutput}'`
-      //     );
-      //   }
-      // );
       const urlPropertyDetail = property.detailUrl;
-      await goToPage(page, urlPropertyDetail);
-
-      //Récupérer les informations accessibles uniquement sur la page du détail du bien
-      const PropertyDetail = await page.evaluate(getMorePropertyInformations);
-
-      property.description = PropertyDetail.description;
-      property.images = PropertyDetail.images;
-
-      connection.connect((error) => {
-        
-        try {
-          /**
-           * Faire des requête à la bdd
-           * @param {*} sql Requête sql
-           * @returns Une promesse contenant le résultat de la requete
-           */
-          const query = (sql) => {
-            return new Promise((resolve, reject) => {
-              connection.query(sql, (error, results) => {
-                if (error) return reject(error);
-                resolve(results);
-              });
-            })
-          }
-
-          /**
-           * Récupérer l'id de la ville de l'annonce à ajouter
-           * @returns L'id de la ville
-           */
-          const getCityDb = async () => {
-            try {
-              let rentColumnAverage = 'average_rent_apartment';
-
-              if ('maison' == property.type.toLowerCase()) {
-                rentColumnAverage = 'average_rent_house';
-              }
-
-              const getCityDbQuery = `SELECT id, ${rentColumnAverage} FROM InvestImmo.city c WHERE LOWER(c.name) = LOWER(${connection.escape(formatCityName(dbCityName))}) AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
-
-              const result = await query(getCityDbQuery)
-              return result[0];
-            } catch (error) {
-              console.error('Erreur de requête : ', error);
-            }
-          }
-
-          /**
-           * Récupérer l'id du type de l'annonce à ajouter
-           * @returns L'id du type
-           */
-          const getPropertyTypeId = async () => {
-            try {
-              const getPropertyTypeIdQuery = `SELECT id FROM InvestImmo.property_type pt WHERE LOWER(pt.type) = LOWER(${connection.escape(property.type)});`;
-
-              const result = await query(getPropertyTypeIdQuery)
-              return result[0].id;
-            } catch (error) {
-              console.error('Erreur de requête : ', error);
-            }
-          }
-
-          const calculateRentability = async (property) => {
-            try {
-              let rentAverage;
-              let nameRentAevrageColumn;
-              let result = 0;
-              let price;
-              let rent;
+      
+      // const isALreadyScraped = await checkIfPropertyIsALreadyScraped(property);
+      
+      // if (isALreadyScraped) {
+        await goToPage(page, urlPropertyDetail);
   
-              if ('maison' == await (property.type).toLowerCase()) {
-                nameRentAevrageColumn = 'average_rent_house';
-              } else {
-                nameRentAevrageColumn = 'average_rent_apartment';
-              }
-
-              await getCityDb().then(res => rentAverage = res[nameRentAevrageColumn]);
-
-              console.log('start');
-              price = property.price + ( 9 * property.price / 100);
-              console.log('property.price :', property.price);
-              console.log('price :', price);
-              rent = property.surface * rentAverage;
-              console.log('property.surface :', property.surface);
-              console.log('rentAverage :', rentAverage);
-              console.log('rent :', rent);
-              result = (rent * 12 * 100) / price;
-              console.log('result :', result);
-              console.log('end');
-              
-              return result.toFixed(1);
-            } catch (error) {
-              console.error('Erreur de calcul de rentabilité : ', error);
-            }
-          }
-
-
-          const mysql_real_escape_string = (str) => {
-            return str.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, function (char) {
-              switch (char) {
-                case "\0":
-                  return "\\0";
-                case "\x08":
-                  return "\\b";
-                case "\x09":
-                  return "\\t";
-                case "\x1a":
-                  return "\\z";
-                case "\n":
-                  return "\\n";
-                case "\r":
-                  return "\\r";
-                case "\"":
-                case "'":
-                case "\\":
-                case "%":
-                  return "\\"+char;
-                default:
-                  return char;
-              }
-            });
-          }
-          
-          const insertProperty = async () => {
-            let cityId;
-            let propertyTypeId;
-            let rentability = '';
+        //Récupérer les informations accessibles uniquement sur la page du détail du bien
+        const PropertyDetail = await page.evaluate(getMorePropertyInformations);
+  
+        property.description = PropertyDetail.description;
+        property.images = PropertyDetail.images;
+  
+        connection.connect((error) => {
+          try {
+  
+          insertProperty(property).then(result => {
+            queryInsertData += result;
+          });
             
-            await getCityDb().then(result => cityId = result.id);
-
-            await getPropertyTypeId().then(result => propertyTypeId = result);
-            // calculateRentability(property).then(result => console.log('result :', result));
-
-            await calculateRentability(property).then(result => rentability = result);
-            // console.log('rentability :', rentability);
-            
-            const addProperty = `INSERT INTO InvestImmo.property (source, city_id, property_type_id, surface, room_number, price, rentability, description, source_url) \nVALUES('Scraping', ${connection.escape(cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(rentability)}, ${connection.escape(mysql_real_escape_string(property.description))}, ${connection.escape(mysql_real_escape_string(property.detailUrl))});\n`;
-        
-            let addPropertyImages = 'INSERT INTO InvestImmo.property_image (property_id, image, created_at, updated_at)\nVALUES ';
-
-            for (let index = 0; index < property.images.length; index++) {
-              const image = property.images[index];
-              
-              addPropertyImages += `(LAST_INSERT_ID(), ${connection.escape(mysql_real_escape_string(image))}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
-
-              // console.log('index :', index);
-              // console.log('property.images.length :', property.images.length);
-              // console.log('(property.images.length - 1) == index :', (property.images.length - 1) == index);
-
-              if ((property.images.length - 1) !== index) {
-                addPropertyImages += ',\n'
-              } else {
-                addPropertyImages += ';\n'
-              }
-            }
-
-            // console.log('cityId :', cityId);
-            // console.log('propertyTypeId :', propertyTypeId);
-            // console.log('*** INSERT *** :', addProperty, addPropertyImages);
-
-            queriesData = queriesData + addProperty + addPropertyImages;
-
+          } catch (error) {
+            saveErrorLog(error);
+            console.error("/!\\ Erreur de requête : ", error);
           }
-
-          insertProperty();
-          getCityDb();
-          
-        } catch (error) {
-          console.log("Erreur de requête : ", error);
-        }
-
-        // console.log('addPropertyImages :', addPropertyImages);
-
-        // connection.query(addPropertyImages, function (error, result) {
-        //   if (error) {
-        //     console.log('Erreur de requête : ', error);
-        //     return;
-        //   }
-        //   console.log('Requête réussie :',result);
-        // });
-
-        if (error) {
-          console.log("Erreur de connexion à la bdd : ", error);
-          return;
-        }
-      });
+  
+          if (error) {
+            console.error("/!\\ Erreur de connexion à la bdd : ", error);
+            return;
+          }
+        });
+      // }
     }
 
     // Fermer le navigateur
     await closeBrowser(browser);
 
     // return result;
-    return queriesData;
+    return queryInsertData;
   } catch (error) {
+    saveErrorLog(error);
     console.error("/!\\ Error from getAllProperties() :", error);
   }
 };
 
-const saveData = async (scrapedData) => {
+const setFileName = (folder,baseFileName, fileExtension) => {
   const currentDatetime = new Date();
-  let year = currentDatetime.getFullYear().toString();
-  let month = (currentDatetime.getMonth() + 1).toString();
-  let date = currentDatetime.getDate().toString();
-  let hours = currentDatetime.getHours().toString();
-  let minutes = currentDatetime.getMinutes().toString();
-  let seconds = currentDatetime.getSeconds().toString();
+  const year = currentDatetime.getFullYear().toString();
+  const month = (currentDatetime.getMonth() + 1).toString();
+  const date = currentDatetime.getDate().toString();
+  const hours = currentDatetime.getHours().toString();
+  const minutes = currentDatetime.getMinutes().toString();
+  const seconds = currentDatetime.getSeconds().toString();
 
-  let filenameParameter = { year, month, date, hours, minutes, seconds };
+  const filenameParameter = { year, month, date, hours, minutes, seconds };
 
   for (const parameter in filenameParameter) {
     if (
@@ -598,40 +595,56 @@ const saveData = async (scrapedData) => {
     }
   }
 
-  // const jsonFileOutput = `data_century21_scraped_${filenameParameter.year}${filenameParameter.month}${filenameParameter.date}${filenameParameter.hours}${filenameParameter.minutes}${filenameParameter.seconds}.json`;
+  if (!fs.existsSync(folder)){
+    fs.mkdirSync(folder);
+  }
 
-  const sqlFileOutput = `data_century21_scraped_${filenameParameter.year}${filenameParameter.month}${filenameParameter.date}${filenameParameter.hours}${filenameParameter.minutes}${filenameParameter.seconds}.sql`;
+  const fileOutputName = `${folder}${baseFileName}_${filenameParameter.year}${filenameParameter.month}${filenameParameter.date}${filenameParameter.hours}${filenameParameter.minutes}${filenameParameter.seconds}.${fileExtension}`;
 
-  // fs.writeFile(
-  //   // `./data_century21/${jsonFileOutput}`,
-  //   // JSON.stringify(scrapedData),
-  //   `./data_century21/${sqlFileOutput}`,
-  //   JSON.stringify(scrapedData),
-  //   "utf8",
-  //   function (error) {
-  //     if (error) {
-  //       return console.log(error);
-  //     }
-  //     console.log(
-  //       // `Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${jsonFileOutput}'`
-  //       `Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${sqlFileOutput}'`
-  //     );
-  //   }
-  // );
-  fs.writeFile(`./data_century21/${sqlFileOutput}`, scrapedData, 'utf8', (error) => {
+  return fileOutputName;
+}
+
+const saveData = async (scrapedData) => {
+  const sqlFileOutput = setFileName('./data_century21/','data_century21_scraped', 'sql');
+
+  fs.writeFile(`${sqlFileOutput}`, scrapedData, 'utf8', (error) => {
     if(error) {
-      return console.log(error);
+      saveErrorLog(error);
+      console.error('/!\\ Une erreur est survenue lors de la sauvegarde des données, elles n\'ont pas été sauvegardées dans un fichier :', error);
     }
-      console.log(`Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans './data_century21/${sqlFileOutput}'`);
-      process.exit();
+
+    console.log(`Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans '${sqlFileOutput}'`);
+    process.exit();
   });
 };
+
+const saveErrorLog = (errorLog) => {
+  const errorLogFileOutput = setFileName('./error_log_century21/','error_log_century21_scraping', 'txt');
+
+  fs.writeFile(`${errorLogFileOutput}`, errorLog, 'utf8', (error) => {
+    if(error) {
+      saveErrorLog(error);
+      console.error('/!\\ Erreur lors de la sauvegarde du message d\'erreur', error);
+    }
+
+    console.log(`Erreur sauvegardé dans '${errorLogFileOutput}'`);
+    process.exit();
+  });
+}
 
 (
   async () => {
     console.time("Scraping ");
     const data = await getAllProperties();
-    await saveData(data);
+
+    if ('' == data) {
+      const message = 'Aucun bien a été trouvé.';
+      saveErrorLog(message);
+      console.error('/!\\ Error : ',message);
+    } else {
+      saveData(data);
+    };
+
     console.timeEnd("Scraping ");
   }
 )();
