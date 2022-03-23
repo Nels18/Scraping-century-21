@@ -396,7 +396,6 @@ const checkIfPropertyIsALreadyScraped = async (property) => {
     return isAlreadyScraped;
   } catch (error) {
     saveErrorLog(error);
-    console.error('/!\\ Erreur dans checkIfPropertyIsALreadyScraped : ', error);
   }
 };
 
@@ -407,21 +406,24 @@ const checkIfPropertyIsALreadyScraped = async (property) => {
 const getCityDb = async (property) => {
   try {
 
+    // console.log('))))))))property :', property);
+
     if ('maison' == await (property.type).toLowerCase()) {
       property.rentAverageColumnName = 'average_rent_house';
     } else {
       property.rentAverageColumnName = 'average_rent_apartment';
     }
 
-    const getCityDbQuery = `SELECT id, ${property.rentAverageColumnName} FROM city c WHERE LOWER(c.name) = LOWER('${escapeMysqlRealString(formatCityName(property.cityName))}') AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
+    const getCityDbQuery = `SELECT id, ${property.rentAverageColumnName} FROM city c WHERE LOWER(REPLACE(c.name, ' ', '-')) = LOWER('${escapeMysqlRealString(formatCityName(property.cityName))}') AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
 
-    // console.log('getCityDbQuery :', getCityDbQuery);
+    // console.log('))))))))))getCityDbQuery :', getCityDbQuery);
 
     const result = await query(getCityDbQuery);
+    // console.log('))))))))result :', result);
+
     return result[0];
   } catch (error) {
     saveErrorLog(error);
-    console.error('/!\\ Erreur de requête : ', error);
   }
 }
   
@@ -437,7 +439,6 @@ const getPropertyTypeId = async (property) => {
     return result[0].id;
   } catch (error) {
     saveErrorLog(error);
-    console.error('/!\\ Erreur de requête : ', error);
   }
 }
   
@@ -454,7 +455,6 @@ const calculateRentability = async (property) => {
     return result.toFixed(1);
   } catch (error) {
     saveErrorLog(error);
-    console.error('/!\\ Erreur de calcul de rentabilité : ', error);
   }
 }
 
@@ -464,43 +464,49 @@ const insertProperty = async (property) => {
     let rentability = '';
     let queryInsertData = '';
     
+    // console.log('))))))))property :', property);
     await getCityDb(property).then(result => {
+      // console.log('))))))))result :', typeof result);
+      if (!result) return;
       property.cityId = result.id;
       property.rentAverageColumnName = result[property.rentAverageColumnName];
-    });  
-  
-    await getPropertyTypeId(property).then(result => propertyTypeId = result);
-  
-    await calculateRentability(property).then(result => rentability = result);
+    });
     
-    const queryInsertProperty = `INSERT INTO property (source, city_id, property_type_id, surface, room_number, price, rentability, description, source_url) \nVALUES ('Scraping', ${connection.escape(property.cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(rentability)}, '${escapeMysqlRealString(property.description)}', '${escapeMysqlRealString(property.detailUrl)}');\n`;
-
-    // console.log('queryInsertProperty :', queryInsertProperty);
-  
-    let queryInsertPropertyImages = 'INSERT INTO property_image (property_id, image, created_at, updated_at)\nVALUES ';
-  
-    for (let index = 0; index < property.images.length; index++) {
-      const image = property.images[index];
+    if (property.cityId) {
+      await getPropertyTypeId(property).then(result => propertyTypeId = result);
       
-      queryInsertPropertyImages += `(LAST_INSERT_ID(), '${escapeMysqlRealString(image)}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+      await calculateRentability(property).then(result => rentability = result);
+      // console.log('))))))))property :', property);
+      
+      const queryInsertProperty = `INSERT INTO property (source, city_id, property_type_id, surface, room_number, price, rentability, description, source_url) \nVALUES ('Scraping', ${connection.escape(property.cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(rentability)}, '${escapeMysqlRealString(property.description)}', '${escapeMysqlRealString(property.detailUrl)}');\n`;
   
-      if ((property.images.length - 1) !== index) {
-        queryInsertPropertyImages += ',\n'
-      } else {
-        queryInsertPropertyImages += ';\n'
+      // console.log('queryInsertProperty :', queryInsertProperty);
+    
+      let queryInsertPropertyImages = 'INSERT INTO property_image (property_id, image, created_at, updated_at)\nVALUES ';
+    
+      for (let index = 0; index < property.images.length; index++) {
+        const image = property.images[index];
+        
+        queryInsertPropertyImages += `(LAST_INSERT_ID(), '${escapeMysqlRealString(image)}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+    
+        if ((property.images.length - 1) !== index) {
+          queryInsertPropertyImages += ',\n'
+        } else {
+          queryInsertPropertyImages += ';\n'
+        }
       }
+  
+      
+      if (!queryInsertProperty || !queryInsertPropertyImages) return;
+      
+      queryInsertData = queryInsertData + queryInsertProperty + queryInsertPropertyImages;
+      
+      // console.log('))))))))))))))queryInsertData :', queryInsertData);
+      return queryInsertData;
     }
-
     
-    if (!queryInsertProperty || !queryInsertPropertyImages) return;
-    
-    queryInsertData = queryInsertData + queryInsertProperty + queryInsertPropertyImages;
-    
-    // console.log('))))))))))))))queryInsertData :', queryInsertData);
-    return queryInsertData;
   } catch (error) {
     saveErrorLog(error.toString(), property.detailUrl);
-    console.error('/!\\ Erreur lors de la création du fichier sql : ', error);
   }
 }
 
@@ -556,6 +562,7 @@ const getAllProperties = async () => {
         connection.connect((error) => {
           try {
   
+            // console.log('property :', property);
           insertProperty(property).then(result => {
             // console.log('))))))))))result :', result);
             if (result) {
@@ -624,21 +631,19 @@ const setFileName = (folder,baseFileName, fileExtension, isPartial = false) => {
 const saveData = async (scrapedData) => {
 
   try {
-    const sqlFileOutput = setFileName('./data_century21/','data_century21_scraped', 'sql', true);
+    const sqlFileOutput = setFileName('./data_century21/','data_century21_scraped', 'sql');
   
-    fs.writeFileSync(`${sqlFileOutput}`, scrapedData, 'utf8', (error) => {
-      console.log(`Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans '${sqlFileOutput}'`);
-    });
-
+    fs.writeFileSync(`${sqlFileOutput}`, scrapedData, 'utf8');
+    console.log(`Les données ont été extraites et sauvegardées avec succès ! Visualisez-les dans '${sqlFileOutput}'`);
+    
     return sqlFileOutput;
   } catch (error) {
     saveErrorLog(error.toString());
-    console.error('/!\\ Une erreur est survenue lors de la sauvegarde des données :', error);
   }
 };
 
 const saveErrorLog = (errorLog, moreInformations = '') => {
-  const errorLogFileOutput = setFileName('./error_log_century21/','error_log_century21_scraping', 'txt');
+  const errorLogFileOutput = setFileName('./error_log_century21/','error_log_century21_scraping', 'txt', true);
 
   if (moreInformations) {
     moreInformations = moreInformations+ ' : ';
@@ -648,10 +653,9 @@ const saveErrorLog = (errorLog, moreInformations = '') => {
 
   fs.appendFile(`${errorLogFileOutput}`, errorLog, 'utf8', (error) => {
     if(error) {
-      console.error('/!\\ Erreur lors de la sauvegarde du message d\'erreur', error);
     }
 
-    console.log(`Erreur sauvegardé dans '${errorLogFileOutput}'`);
+    console.log(errorLog);
     // process.exit();
   });
 }
@@ -666,14 +670,12 @@ const saveErrorLog = (errorLog, moreInformations = '') => {
       if ('' == data) {
         const message = 'Aucun bien a été trouvé.';
         saveErrorLog(message);
-        console.error('/!\\ Error : ',message);
       } else {
         const sqlFileOutput = await saveData(data);
 
         fs.readFile(`${sqlFileOutput}`, "utf8", async (error, data) => {    
           if (error) {
             console.error(error);
-            // return;
           }
     
           await query(data);
@@ -692,6 +694,5 @@ const saveErrorLog = (errorLog, moreInformations = '') => {
     // console.log('dataFile :', dataFile);
     // await query(dataFile);
     process.exit();
-
   }
 )();
