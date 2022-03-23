@@ -9,6 +9,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "dotenv": "^16.0.0",
+    "mysql2": "^2.3.3",
     "puppeteer": "^13.4.0"
   }
 }
