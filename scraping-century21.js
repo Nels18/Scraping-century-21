@@ -80,6 +80,7 @@ const goToPage = async (page, url) => {
   }
 };
 
+
 /**
  * Récupérer les urls des pages de résultats de la recherche
  * @param {puppeteer.Page} page
@@ -403,15 +404,12 @@ const formatCityName = (string) => {
 const checkIfPropertyIsALreadyScraped = async (property) => {
   try {
     const getPropertyUrlDbQuery = `SELECT source_url FROM property WHERE source_url = '${escapeMysqlRealString(property.detailUrl)}';`;
-
-
     const propertyUrlDb = await query(getPropertyUrlDbQuery);
+    const result = 0 !== propertyUrlDb.length;
 
-    // const isAlreadyScraped = (0 === await query(getPropertyUrlDbQuery).length);
+    // console.log('result :', result);
 
-    const isAlreadyScraped = 0 === propertyUrlDb.length;
-
-    return isAlreadyScraped;
+    return result;
   } catch (error) {
     saveErrorLog(error);
   }
@@ -549,7 +547,7 @@ const getAllProperties = async () => {
     for (let index = 1; index < 2; index++) {
       // await goToPage(page, urlPageToScrap);
       await goToPage(page, pagesToScrap[index]);
-
+      
       // Récupérer les biens d'une page
       const properties = await page.evaluate(getProperties);
 
@@ -566,11 +564,16 @@ const getAllProperties = async () => {
     for await (const property of result) {
 
       const urlPropertyDetail = property.detailUrl;
+      let isAlreadyScraped;
       
-      const isAlreadyScraped = await checkIfPropertyIsALreadyScraped(property);
+      await checkIfPropertyIsALreadyScraped(property).then(result => {
+        isAlreadyScraped = result;
+      });
       
-      if (isAlreadyScraped) {
+      if (!isAlreadyScraped) {
         await goToPage(page, urlPropertyDetail);
+        const pageHasMesageError410 = await checkIfPageHasMesageError410(page);
+        if (pageHasMesageError410) return;
   
         //Récupérer les informations accessibles uniquement sur la page du détail du bien
         const PropertyDetail = await page.evaluate(getMorePropertyInformations);
@@ -687,11 +690,48 @@ const saveErrorLog = (errorLog, moreInformations = '') => {
 
   fs.appendFile(`${errorLogFileOutput}`, errorLog, 'utf8', (error) => {
     if(error) {
+      console.error(error);
     }
 
     console.log(errorLog);
     // process.exit();
   });
+}
+
+const checkIfPageHasMesageError410 = async (page) => {
+  const result = await page.evaluate(async ()=> {
+    let mesageError410 = document.querySelector('.c-text-theme-heading-2.tw-m-auto.tw-text-center');
+
+    if (mesageError410) {
+      return true;
+    }
+
+    return false;
+  })
+
+  return result;
+}
+
+const checkIfPropertyIsAvailable = async () => {
+  try {
+    const getAllSourceUrlQuery = 'SELECT source_url FROM property WHERE source_url IS NOT NULL;';
+    const allSourceUrls = await query(getAllSourceUrlQuery);
+    const browser = await getBrowser();
+    // const  browser = await puppeteer.launch({headless: false});
+    const page = await browser.newPage();
+    
+    let sourceUrl = 'https://www.century21.fr/annonces/f/achat-maison-appartement-terrain-parking-immeuble-divers/d-94'; //test
+    // for await (let sourceUrl of allSourceUrls) {
+    for (let index = 0; index < 1; index++) {
+      await goToPage(page, sourceUrl);
+      // sourceUrl = sourceUrl["source_url"];
+      const pageHasMesageError410 = await checkIfPageHasMesageError410(page);
+
+      console.log('pageHasMesageError410 : ', pageHasMesageError410);
+    }
+  } catch (error) {
+    saveErrorLog(error);
+  }
 }
 
 
@@ -725,8 +765,11 @@ const scrapCentury = async () => {
   // process.exit();
 };
 
-cron.schedule('* * * * *', async() => {
-  console.log('Routine start ...');
-  await scrapCentury();
-  console.log('Routine end ...');
-});
+// cron.schedule('* * * * *', async() => {
+//   console.log('Routine start ...');
+//   await scrapCentury();
+//   console.log('Routine end ...');
+// });
+
+// checkIfPropertyIsAvailable();
+scrapCentury()
