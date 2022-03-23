@@ -25,6 +25,10 @@ const urlsLocation = [
   // "d-95_val_d_oise/",
 ];
 
+/**
+ * Ouvrir un navigateur
+ * @returns {puppeteer.browser} Un navigateur
+ */
 const getBrowser = async () => {
   let browser;
 
@@ -39,6 +43,10 @@ const getBrowser = async () => {
   return browser;
 };
 
+/**
+ * Fermer le navigateur en cours
+ * @param {puppeteer.browser} browser 
+ */
 const closeBrowser = async (browser) => {
   try {
     console.log("Closing the browser......");
@@ -49,9 +57,9 @@ const closeBrowser = async (browser) => {
 };
 
 /**
- *
+ * Aller à la page souhaitée
  * @param {puppeteer.Page} page
- * @param {string} url
+ * @param {string} url url de la page souhaitée
  */
 const goToPage = async (page, url) => {
   try {
@@ -73,7 +81,7 @@ const goToPage = async (page, url) => {
 };
 
 /**
- *
+ * Récupérer les urls des pages de résultats de la recherche
  * @param {puppeteer.Page} page
  * @param {string} url
  * @returns Toutes les urls des pages de résultats de la recherche
@@ -113,8 +121,8 @@ const getUrlsPages = async (page, url) => {
 /**
  * Récupérer les urls de toutes les pages de la recherche dans la pagination
  * @param {puppeteer.Page} page
- * @param {string} urlFull
- * @returns
+ * @param {string} urlFull url de la localité à sraper
+ * @returns les urls de toutes les pages de la localité à scraper
  */
 const getPagesForEachLocation = async (page, urlFull) => {
   try {
@@ -129,8 +137,9 @@ const getPagesForEachLocation = async (page, urlFull) => {
 };
 
 /**
- * Récupère les pages à scraper
- * @returns Les pages à scraper
+ *  * Récupérer les pages à scraper
+ * @param {puppeteer.browser} browser 
+ * @returns {string[]} Les pages à scraper
  */
 const getPagesToScrap = async (browser) => {
   try {
@@ -284,6 +293,11 @@ const getMorePropertyInformations = async () => {
   }
 };
 
+/**
+ * Échapper les tring pour les requêtes sql
+ * @param {string} string donnée à échapper
+ * @returns {string} donnée échappé
+ */
 const escapeMysqlRealString = (string) => {
   return string.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, (character) => {
     switch (character) {
@@ -313,7 +327,7 @@ const escapeMysqlRealString = (string) => {
 
 /**
  * Faire des requête à la bdd
- * @param {*} sql Requête sql
+ * @param {string} sql Requête sql
  * @returns Une promesse contenant le résultat de la requete
  */
 const query = (sql) => {
@@ -324,7 +338,11 @@ const query = (sql) => {
     });
   })
 }
-
+/**
+ * Formater le nom de la ville
+ * @param {string} string Nom de la ville à formater
+ * @returns {string} Nom de la ville formater
+ */
 const formatCityName = (string) => {
   const accentedChar = {
     à: "a",
@@ -377,21 +395,21 @@ const formatCityName = (string) => {
   return string;
 };
 
+/**
+ * Vérifier si un bien à déja été scraper
+ * @param {Object} property Un bien
+ * @returns {boolean} 
+ */
 const checkIfPropertyIsALreadyScraped = async (property) => {
   try {
-    // console.log('property :', property);
     const getPropertyUrlDbQuery = `SELECT source_url FROM property WHERE source_url = '${escapeMysqlRealString(property.detailUrl)}';`;
 
-    // console.log('property.detailUrl :', property.detailUrl);
 
     const propertyUrlDb = await query(getPropertyUrlDbQuery);
 
     // const isAlreadyScraped = (0 === await query(getPropertyUrlDbQuery).length);
-    // console.log('getPropertyUrlDbQuery :', getPropertyUrlDbQuery);
-    // console.log('propertyUrlDb :', propertyUrlDb);
 
     const isAlreadyScraped = 0 === propertyUrlDb.length;
-    // console.log('isAlreadyScraped :', isAlreadyScraped);
 
     return isAlreadyScraped;
   } catch (error) {
@@ -406,7 +424,6 @@ const checkIfPropertyIsALreadyScraped = async (property) => {
 const getCityDb = async (property) => {
   try {
 
-    // console.log('))))))))property :', property);
 
     if ('maison' == await (property.type).toLowerCase()) {
       property.rentAverageColumnName = 'average_rent_house';
@@ -416,10 +433,8 @@ const getCityDb = async (property) => {
 
     const getCityDbQuery = `SELECT id, ${property.rentAverageColumnName} FROM city c WHERE LOWER(REPLACE(c.name, ' ', '-')) = LOWER('${escapeMysqlRealString(formatCityName(property.cityName))}') AND c.zipcode LIKE '${connection.escape(property.departmentCode)}%';`;
 
-    // console.log('))))))))))getCityDbQuery :', getCityDbQuery);
 
     const result = await query(getCityDbQuery);
-    // console.log('))))))))result :', result);
 
     return result[0];
   } catch (error) {
@@ -442,6 +457,11 @@ const getPropertyTypeId = async (property) => {
   }
 }
   
+/**
+ * Calculer la rentabiité d'un bien
+ * @param {Object} property bien à calculer la 
+ * @returns la rentabilité
+ */
 const calculateRentability = async (property) => {
   try {
     let result = 0;
@@ -458,15 +478,18 @@ const calculateRentability = async (property) => {
   }
 }
 
+/**
+ * Insertion du bien dans la bd
+ * @param {Object} property une propriété à insérer dans la bdd
+ * @returns la requête pour insérer le bien
+ */
 const insertProperty = async (property) => {
   try {
     let propertyTypeId;
     let rentability = '';
     let queryInsertData = '';
     
-    // console.log('))))))))property :', property);
     await getCityDb(property).then(result => {
-      // console.log('))))))))result :', typeof result);
       if (!result) return;
       property.cityId = result.id;
       property.rentAverageColumnName = result[property.rentAverageColumnName];
@@ -476,11 +499,9 @@ const insertProperty = async (property) => {
       await getPropertyTypeId(property).then(result => propertyTypeId = result);
       
       await calculateRentability(property).then(result => rentability = result);
-      // console.log('))))))))property :', property);
       
       const queryInsertProperty = `INSERT INTO property (source, city_id, property_type_id, surface, room_number, price, rentability, description, source_url) \nVALUES ('Scraping', ${connection.escape(property.cityId)}, ${connection.escape(propertyTypeId)}, ${connection.escape(property.surface)}, ${connection.escape(property.nbRoom)}, ${connection.escape(property.price)}, ${connection.escape(rentability)}, '${escapeMysqlRealString(property.description)}', '${escapeMysqlRealString(property.detailUrl)}');\n`;
   
-      // console.log('queryInsertProperty :', queryInsertProperty);
     
       let queryInsertPropertyImages = 'INSERT INTO property_image (property_id, image, created_at, updated_at)\nVALUES ';
     
@@ -501,7 +522,6 @@ const insertProperty = async (property) => {
       
       queryInsertData = queryInsertData + queryInsertProperty + queryInsertPropertyImages;
       
-      // console.log('))))))))))))))queryInsertData :', queryInsertData);
       return queryInsertData;
     }
     
@@ -517,7 +537,6 @@ const insertProperty = async (property) => {
 const getAllProperties = async () => {
   try {
     const browser = await getBrowser();
-    // const browser = await puppeteer.launch({ headless: false });
 
     //Récupérer toutes les pages à scraper
     const pagesToScrap = await getPagesToScrap(browser);
@@ -562,9 +581,7 @@ const getAllProperties = async () => {
         connection.connect((error) => {
           try {
   
-            // console.log('property :', property);
           insertProperty(property).then(result => {
-            // console.log('))))))))))result :', result);
             if (result) {
               queryInsertData += result;
             }
@@ -586,7 +603,6 @@ const getAllProperties = async () => {
     // Fermer le navigateur
     await closeBrowser(browser);
 
-    // return result;
     return queryInsertData;
   } catch (error) {
     saveErrorLog(error);
@@ -594,6 +610,14 @@ const getAllProperties = async () => {
   }
 };
 
+/**
+ * Créer un nom de fichier horodater
+ * @param {string} folder Dossier cible
+ * @param {string} baseFileName Nom du fichier
+ * @param {string} fileExtension extension du fichier
+ * @param {boolean} isPartial défini si le format de l'horodatage, avec ou sans les secondes
+ * @returns {string} Nom final du fichier
+ */
 const setFileName = (folder,baseFileName, fileExtension, isPartial = false) => {
   const currentDatetime = new Date();
   const year = currentDatetime.getFullYear().toString();
@@ -628,6 +652,11 @@ const setFileName = (folder,baseFileName, fileExtension, isPartial = false) => {
   return fileOutputName;
 }
 
+/**
+ * Créer un fichier sql pour l'insertion en bdd
+ * @param {string} scrapedData Données scrapées
+ * @returns {string} Nom du fichier créé
+ */
 const saveData = async (scrapedData) => {
 
   try {
@@ -642,6 +671,11 @@ const saveData = async (scrapedData) => {
   }
 };
 
+/**
+ * Ajouter le message d'erreur dans un fichier
+ * @param {string} errorLog Message d'erreur
+ * @param {string} moreInformations Informations complémentaire
+ */
 const saveErrorLog = (errorLog, moreInformations = '') => {
   const errorLogFileOutput = setFileName('./error_log_century21/','error_log_century21_scraping', 'txt', true);
 
@@ -688,11 +722,6 @@ const saveErrorLog = (errorLog, moreInformations = '') => {
       console.error("/!\\ Erreur : ", error);
     }
 
-
-    // const dataFile = fs.readFileSync((sqlFile).toString())
-
-    // console.log('dataFile :', dataFile);
-    // await query(dataFile);
     process.exit();
   }
 )();
