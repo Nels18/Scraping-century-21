@@ -3,7 +3,7 @@ require("dotenv").config();
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const mysql = require("mysql2");
-const path = require('path');
+const cron = require('node-cron');
 
 //connect to MySQL
 const connection = mysql.createConnection({
@@ -694,34 +694,39 @@ const saveErrorLog = (errorLog, moreInformations = '') => {
   });
 }
 
-(
-  async () => {
 
-    try {      
-      console.time("Scraping ");
-      const data = await getAllProperties();
+const scrapCentury = async () => {
+
+  try {      
+    console.time("Scraping ");
+    const data = await getAllProperties();
+
+    if ('' == data) {
+      const message = 'Aucun nouveau bien n\'a été trouvé.';
+      saveErrorLog(message);
+    } else {
+      const sqlFileOutput = await saveData(data);
+
+      fs.readFile(`${sqlFileOutput}`, "utf8", async (error, data) => {    
+        if (error) {
+          console.error(error);
+        }
   
-      if ('' == data) {
-        const message = 'Aucun bien a été trouvé.';
-        saveErrorLog(message);
-      } else {
-        const sqlFileOutput = await saveData(data);
+        await query(data);
+      });
+    };
 
-        fs.readFile(`${sqlFileOutput}`, "utf8", async (error, data) => {    
-          if (error) {
-            console.error(error);
-          }
-    
-          await query(data);
-        });
-      };
-  
-      console.timeEnd("Scraping ");
-    } catch (error) {
-      saveErrorLog(error);
-      console.error("/!\\ Erreur : ", error);
-    }
-
-    process.exit();
+    console.timeEnd("Scraping ");
+  } catch (error) {
+    saveErrorLog(error);
+    console.error("/!\\ Erreur : ", error);
   }
-)();
+
+  // process.exit();
+};
+
+cron.schedule('* * * * *', async() => {
+  console.log('Routine start ...');
+  await scrapCentury();
+  console.log('Routine end ...');
+});
