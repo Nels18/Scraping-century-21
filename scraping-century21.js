@@ -4,6 +4,7 @@ const puppeteer = require("puppeteer");
 const fs = require("fs");
 const mysql = require("mysql2");
 const cron = require('node-cron');
+const { isNull } = require("core-util-is");
 
 //connect to MySQL
 const connection = mysql.createConnection({
@@ -557,6 +558,7 @@ const getAllProperties = async () => {
     result = result.flat();
 
     let queryInsertData = '';
+    let nbPropertyInsert = 0;
 
     // Pour chaque bien
     // Aller dans la page de détail
@@ -587,6 +589,7 @@ const getAllProperties = async () => {
           insertProperty(property).then(result => {
             if (result) {
               queryInsertData += result;
+              nbPropertyInsert++;
             }
           });
             
@@ -602,6 +605,7 @@ const getAllProperties = async () => {
         });
       }
     }
+    console.log(`Biens scrapés : ${nbPropertyInsert}`);
 
     // Fermer le navigateur
     await closeBrowser(browser);
@@ -698,43 +702,106 @@ const saveErrorLog = (errorLog, moreInformations = '') => {
   });
 }
 
+/**
+ * Indique si la page est acccessible
+ * @param {puppeteer.page} page 
+ * @returns {boolean} Indique si un message d'erreur 410 est présent sur la page
+ */
 const checkIfPageHasMesageError410 = async (page) => {
-  const result = await page.evaluate(async ()=> {
-    let mesageError410 = document.querySelector('.c-text-theme-heading-2.tw-m-auto.tw-text-center');
-
-    if (mesageError410) {
-      return true;
-    }
-
-    return false;
-  })
-
-  return result;
-}
-
-const checkIfPropertyIsAvailable = async () => {
   try {
-    const getAllSourceUrlQuery = 'SELECT source_url FROM property WHERE source_url IS NOT NULL;';
-    const allSourceUrls = await query(getAllSourceUrlQuery);
-    const browser = await getBrowser();
-    // const  browser = await puppeteer.launch({headless: false});
-    const page = await browser.newPage();
-    
-    let sourceUrl = 'https://www.century21.fr/annonces/f/achat-maison-appartement-terrain-parking-immeuble-divers/d-94'; //test
-    // for await (let sourceUrl of allSourceUrls) {
-    for (let index = 0; index < 1; index++) {
-      await goToPage(page, sourceUrl);
-      // sourceUrl = sourceUrl["source_url"];
-      const pageHasMesageError410 = await checkIfPageHasMesageError410(page);
-
-      console.log('pageHasMesageError410 : ', pageHasMesageError410);
-    }
+    const result = await page.evaluate(async ()=> {
+      let mesageError410 = document.querySelector('.c-text-theme-heading-2.tw-m-auto.tw-text-center');
+  
+      if (mesageError410) {
+        return true;
+      }
+  
+      return false;
+    })
+  
+    return result;
   } catch (error) {
     saveErrorLog(error);
   }
 }
 
+/**
+ * Récuprérer la valeur de la colonne 'deleted_at'
+ * @param {string} propertySourceUrl Url source du bien
+ * @returns La valeur de la colonne 'deleted_at'
+ */
+const getPropertyDeletedAt = async (propertySourceUrl) =>{
+  try {
+    const getPropertyDeletedAtQuery = `SELECT deleted_at FROM property WHERE (source_url = '${escapeMysqlRealString(propertySourceUrl)}');`;
+  
+    return await query(getPropertyDeletedAtQuery);
+  } catch (error) {
+    saveErrorLog(error);
+  }
+}
 
+/**
+ * Définir une date de supression 
+ * @param {string} propertySourceUrl Url du bien
+ */
+const setPropertyDeletedAt = async (propertySourceUrl) =>{
+  try {
+    const setPropertyDeletedAtQuery = `UPDATE property SET deleted_at = CURRENT_TIMESTAMP WHERE (source_url = '${escapeMysqlRealString(propertySourceUrl)}');`;
+  
+    await query(setPropertyDeletedAtQuery);
+  } catch (error) {
+    saveErrorLog(error);
+  }
+}
+
+/**
+ * Vérifier que les annonces sont toujours disponibles
+ */
+const checkIfPropertyIsAvailable = async () => {
+  try {
+    console.time("Checking available ");
+
+    const getAllSourceUrlQuery = 'SELECT source_url FROM property WHERE source_url IS NOT NULL;';
+    const allSourceUrls = await query(getAllSourceUrlQuery);
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    let propertiesDeleted = [];
+        
+    for await (let sourceUrl of allSourceUrls) {
+      sourceUrl = sourceUrl["source_url"];
+      await goToPage(page, sourceUrl);
+      const pageHasMesageError410 = await checkIfPageHasMesageError410(page);
+      const propertyDeletedAt = await getPropertyDeletedAt(sourceUrl);
+
+      if (pageHasMesageError410 && isNull(propertyDeletedAt[0].deleted_at)) {
+        await setPropertyDeletedAt(sourceUrl);
+        const getIdDeletedPropertyQuery = `SELECT id FROM property WHERE source_url = '${sourceUrl}'`;
+        let idPropertyDeleted = await query(getIdDeletedPropertyQuery);
+        
+        const propertyDeleted = 
+        {
+          id: idPropertyDeleted[0].id,
+          sour_url:  sourceUrl
+        };
+
+        propertiesDeleted.push(propertyDeleted);
+      }
+
+    }
+
+    console.log(`Biens supprimés : ${propertiesDeleted.length}`);
+    console.log('propertiesDeleted :', propertiesDeleted);
+    console.timeEnd("Checking available ");
+
+    await closeBrowser(browser);
+  } catch (error) {
+    saveErrorLog(error);
+  }
+}
+
+/**
+ * Scraper les anoonces de Century21
+ */
 const scrapCentury = async () => {
 
   try {      
@@ -761,15 +828,21 @@ const scrapCentury = async () => {
     saveErrorLog(error);
     console.error("/!\\ Erreur : ", error);
   }
-
-  // process.exit();
 };
 
 // cron.schedule('* * * * *', async() => {
 //   console.log('Routine start ...');
+//   console.log('*** scrapCentury ***');
 //   await scrapCentury();
 //   console.log('Routine end ...');
 // });
 
-// checkIfPropertyIsAvailable();
-scrapCentury()
+// cron.schedule('30 * * * * *', async() => {
+//   console.log('Routine start ...');
+//   console.log('*** checkIfPropertyIsAvailable ***');
+//   await checkIfPropertyIsAvailable();
+//   console.log('Routine end ...');
+// });
+
+  checkIfPropertyIsAvailable();
+  // scrapCentury();
